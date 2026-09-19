@@ -137,7 +137,7 @@ python midi2razer.py song.mid --legato 0.8 --min-hold 40 --breath 20 --gap 10   
 - `selected` 与 `isPairing` 一律 `false`，对应编辑器里的勾选状态。
 - 「按住右键 + Z」的写法：右键按下 → Z 按下 → Z 松开 → 右键松开，鼠标键包住音符键。
 
-**尚未确认**：右键编号 `1` 与逗号键 `188` 为推测值，欢迎验证后提 issue；鼠标移动事件的写法未知，`MouseMoveType` 字段可能与之相关。
+这里只测试了有关于吹口琴的部分，别的鼠标宏内容不明确
 
 ---
 
