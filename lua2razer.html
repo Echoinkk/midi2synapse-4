@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>罗技 Lua → 雷云4 宏</title>
+<style>
+body{margin:0 auto;padding:20px;max-width:800px;font-family:system-ui,"Microsoft YaHei",sans-serif;line-height:1.6;color:#222}
+h1{font-size:20px;margin:0 0 4px}
+.sub{color:#666;font-size:13px;margin:0 0 20px}
+.card{border:1px solid #ccc;padding:12px 14px;margin-bottom:12px}
+.card h2{font-size:13px;margin:0 0 10px;color:#666;font-weight:600}
+#drop{border:2px dashed #aaa;padding:28px 12px;text-align:center;cursor:pointer}
+#drop:hover,#drop.over{border-color:#333;background:#f5f5f5}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px 14px}
+label.f{display:flex;flex-direction:column;gap:3px;font-size:13px;color:#555}
+label.f input,label.f select{padding:5px;font:inherit}
+button{padding:6px 12px;font:inherit;cursor:pointer}
+.tracks label{display:block;padding:3px 0;font-size:14px}
+.keys{display:flex;gap:4px;margin-top:10px;flex-wrap:wrap}
+.keys span{min-width:32px;padding:5px 0;text-align:center;border:1px solid #ccc;font-family:monospace}
+.keys span.on{background:#333;color:#fff}
+.muted{color:#666;font-size:13px}
+.w{color:#a60} .e{color:#c00} .ok{color:#070}
+.tbl-wrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{text-align:left;padding:5px 8px;border-bottom:1px solid #ddd;white-space:nowrap}
+th{font-size:12px;color:#666}
+code{font-family:monospace;background:#f0f0f0;padding:1px 4px}
+ul.warn{margin:0;padding-left:18px}
+pre{background:#f6f6f6;border:1px solid #ddd;padding:8px;font:12px/1.5 monospace;max-height:180px;overflow:auto;white-space:pre-wrap;margin:10px 0 0}
+.parts{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+</style>
+</head>
+<body>
+<main>
+<h1>罗技 Lua → 雷云4 宏</h1>
+<p class="sub">把 G HUB 脚本里的按键、鼠标键和延迟原样搬进雷云4宏（.xml）· 全程离线，文件不会上传</p>
+
+<div class="card">
+  <div id="drop">拖入 .lua 文件，或点击选择</div>
+  <input type="file" id="file" accept=".lua,.txt" hidden>
+  <div class="muted" id="fname" style="margin-top:8px"></div>
+</div>
+
+<div class="card" id="optCard" hidden>
+  <h2>设置</h2>
+  <div class="grid">
+    <label class="f">从哪个函数开始执行<select id="entry"></select></label>
+    <label class="f">速度倍率（延迟 ÷ 倍率）<input id="speed" type="number" step="0.05" value="1"></label>
+    <label class="f">每约 N 秒拆一个宏（0 不拆）<input id="split" type="number" step="5" value="0"></label>
+  </div>
+</div>
+
+<div class="card" id="resCard" hidden>
+  <h2>结果</h2>
+  <div id="stat"></div>
+  <div class="parts" id="parts"></div>
+</div>
+
+<div class="card" id="mapCard" hidden>
+  <h2>按键对照（请核对）</h2>
+  <div class="tbl-wrap"><table><thead><tr><th>Lua 里</th><th>雷云宏里</th><th>编号</th><th>状态</th></tr></thead><tbody id="map"></tbody></table></div>
+  <p class="muted" style="margin:10px 0 0">"待验证"表示该编号是按 Windows 虚拟键码推测的。导入后在雷云里看一眼显示的按键名是否对得上。</p>
+</div>
+
+<div class="card" id="warnCard" hidden>
+  <h2>跳过 / 提示</h2>
+  <ul class="warn" id="warn"></ul>
+</div>
+
+<div class="card" id="prevCard" hidden>
+  <h2>XML 预览（前 30 行）</h2>
+  <pre id="preview"></pre>
+</div>
+
+<p class="muted">导入：雷云4 → 宏 → 宏列表旁的 ⋯ → 导入，选下载的 .xml，再绑定到侧键。<br>
+注意：Lua 里的触发键、Caps Lock 中止等逻辑不会带过去，需要在雷云里自己绑定按键、选播放方式。</p>
+</main>
+<script>
+// ===== CORE START =====
+// ---- Lua 词法 ----
+function lex(src){
+  const T=[];let i=0,line=1;const n=src.length;
+  const longEnd=(j)=>{let m=src.slice(j).match(/^\[(=*)\[/);if(!m)return -1;const close=']'+m[1]+']';const k=src.indexOf(close,j+m[0].length);return k<0?n:k+close.length};
+  while(i<n){
+    const c=src[i];
+    if(c==='\n'){line++;i++;continue}
+    if(/\s/.test(c)){i++;continue}
+    if(src.startsWith('--',i)){const e=longEnd(i+2);let j;if(e>=0)j=e;else{j=src.indexOf('\n',i);if(j<0)j=n}
+      line+=(src.slice(i,j).match(/\n/g)||[]).length;i=j;continue}
+    if(c==='['&&/^\[=*\[/.test(src.slice(i))){const e=longEnd(i);const raw=src.slice(i,e);T.push({t:'str',v:raw.replace(/^\[=*\[\n?|\]=*\]$/g,''),line});line+=(raw.match(/\n/g)||[]).length;i=e;continue}
+    if(c==='"'||c==="'"){let j=i+1,s='';while(j<n&&src[j]!==c){if(src[j]==='\\'){const e=src[j+1];s+=({n:'\n',t:'\t','\\':'\\','"':'"',"'":"'"})[e]??e;j+=2}else{if(src[j]==='\n')line++;s+=src[j++]}}
+      T.push({t:'str',v:s,line});i=j+1;continue}
+    let m=src.slice(i).match(/^(0[xX][0-9a-fA-F]+|\d+\.?\d*(?:[eE][+-]?\d+)?|\.\d+)/);
+    if(m){T.push({t:'num',v:Number(m[1]),line});i+=m[1].length;continue}
+    m=src.slice(i).match(/^[A-Za-z_][A-Za-z0-9_]*/);
+    if(m){T.push({t:'name',v:m[0],line});i+=m[0].length;continue}
+    m=src.slice(i).match(/^(\.\.\.|\.\.|==|~=|<=|>=|<<|>>|\/\/|::|.)/);
+    T.push({t:'op',v:m[1],line});i+=m[1].length;
+  }
+  T.push({t:'eof',v:'',line});return T;
+}
+const KW=new Set('and break do else elseif end false for function goto if in local nil not or repeat return then true until while'.split(' '));
+const BINOP=new Set(['+','-','*','/','//','%','^','..','==','~=','<','>','<=','>=','and','or','&','|','~','<<','>>','=',',']);
+// ---- 语法（只解析结构）----
+function parse(T){
+  let p=0;const pk=(o=0)=>T[p+o],nx=()=>T[p++];
+  const is=(v,o=0)=>{const t=T[p+o];return t.t!=='str'&&t.v===v};
+  const expect=v=>{if(!is(v))throw new Error(`第 ${pk().line} 行附近语法无法识别（期望 ${v}，遇到 ${pk().v||'文件结尾'}）`);return nx()};
+  function skipBalanced(){const open=nx().v,close={'(':')','[':']','{':'}'}[open];let d=1;
+    while(d&&pk().t!=='eof'){const t=nx();if(t.t==='op'){if(t.v===open)d++;else if(t.v===close)d--}else if(t.t==='name'&&t.v==='function'){skipFuncBody()}}}
+  function skipFuncBody(){while(!is('('))nx();skipBalanced();parseBlock(['end']);expect('end')}
+  function skipExpr(){
+    const startLine=pk().line;let text=[];let ended=false;
+    while(pk().t!=='eof'){
+      const t=pk();
+      if(ended){
+        if(t.t==='str'||(t.t==='op'&&['(','[','{','.',':'].includes(t.v))){ended=false}
+        else if((t.t==='op'||t.t==='name')&&BINOP.has(t.v)){nx();text.push(t.v);ended=false;continue}
+        else break;
+      }
+      if(t.t==='op'&&['(','[','{'].includes(t.v)){const s=p;skipBalanced();text.push(T.slice(s,p).map(x=>x.t==='str'?JSON.stringify(x.v):x.v).join(' '));ended=true;continue}
+      if(t.t==='name'&&t.v==='function'){nx();skipFuncBody();ended=true;text.push('function…end');continue}
+      if(t.t==='name'&&['not'].includes(t.v)){nx();text.push(t.v);continue}
+      if(t.t==='op'&&['-','#','~','.',':'].includes(t.v)){nx();text.push(t.v);continue}
+      if(t.t==='name'&&KW.has(t.v)&&!['true','false','nil'].includes(t.v))break;
+      if(t.t==='op'&&!['...'].includes(t.v))break;
+      nx();text.push(t.t==='str'?JSON.stringify(t.v):t.v);ended=true;
+    }
+    return {text:text.join(' '),line:startLine};
+  }
+  function splitArgs(s,e){const args=[];let cur=[],d=0;
+    for(let k=s;k<e;k++){const t=T[k];if(t.t==='op'&&'([{'.includes(t.v))d++;if(t.t==='op'&&')]}'.includes(t.v))d--;
+      if(d===0&&t.t==='op'&&t.v===','){args.push(cur);cur=[]}else cur.push(t)}
+    if(cur.length)args.push(cur);
+    return args.map(a=>{if(a.length===1&&(a[0].t==='str'||a[0].t==='num'))return {lit:a[0].v};
+      if(a.length===2&&a[0].v==='-'&&a[1].t==='num')return {lit:-a[1].v};
+      return {raw:a.map(x=>x.t==='str'?JSON.stringify(x.v):x.v).join(' ')}});
+  }
+  function parseBlock(terms){
+    const out=[];
+    while(pk().t!=='eof'&&!(pk().t==='name'&&terms.includes(pk().v))){
+      const t=pk(),line=t.line;
+      if(t.t==='op'&&t.v===';'){nx();continue}
+      if(t.t==='op'&&t.v==='::'){nx();nx();nx();continue}
+      if(t.t==='name'){
+        const v=t.v;
+        if(v==='local'&&is('function',1)||v==='function'){
+          if(v==='local')nx();nx();let name='';while(!is('(')){name+=nx().v}
+          const s=p;skipBalanced();const body=parseBlock(['end']);expect('end');
+          out.push({type:'funcdef',name,body,line});continue}
+        if(v==='local'){nx();skipExpr();continue}
+        if(v==='if'){nx();const branches=[];let c=skipExpr();expect('then');
+          branches.push({cond:c.text,body:parseBlock(['elseif','else','end'])});
+          while(is('elseif')){nx();c=skipExpr();expect('then');branches.push({cond:c.text,body:parseBlock(['elseif','else','end'])})}
+          if(is('else')){nx();branches.push({cond:null,body:parseBlock(['end'])})}
+          expect('end');out.push({type:'if',branches,line});continue}
+        if(v==='for'){nx();const s=p;while(!is('do')&&pk().t!=='eof')nx();const doIdx=p;let num=null;
+          if(T[s+1].v==='='){const a=splitArgs(s+2,doIdx);if(a.length>=2&&a.every(x=>'lit'in x&&typeof x.lit==='number'))num=a.map(x=>x.lit)}
+          expect('do');const body=parseBlock(['end']);expect('end');
+          out.push({type:'for',num,body,line});continue}
+        if(v==='while'){nx();skipExpr();expect('do');const body=parseBlock(['end']);expect('end');out.push({type:'loop',kind:'while',body,line});continue}
+        if(v==='repeat'){nx();const body=parseBlock(['until']);expect('until');skipExpr();out.push({type:'loop',kind:'repeat',body,line});continue}
+        if(v==='do'){nx();const body=parseBlock(['end']);expect('end');out.push({type:'do',body,line});continue}
+        if(v==='return'){nx();if(!(pk().t==='name'&&['end','else','elseif','until'].includes(pk().v))&&pk().t!=='eof')skipExpr();out.push({type:'return',line});continue}
+        if(v==='break'){nx();out.push({type:'break',line});continue}
+        if(v==='goto'){nx();nx();out.push({type:'goto',line});continue}
+        if(!KW.has(v)&&is('(',1)){
+          nx();const s=p+1;skipBalanced();const args=splitArgs(s,p-1);
+          if(pk().t==='op'&&['(','[','.',':','='].includes(pk().v)||pk().t==='str'){skipExpr();out.push({type:'other',line});continue}
+          out.push({type:'call',name:v,args,line});continue}
+      }
+      const before=p;skipExpr();if(p===before){nx()}
+      out.push({type:'other',line});
+    }
+    return out;
+  }
+  const body=parseBlock([]);return body;
+}
+// ---- 映射 ----
+const VK={escape:27,tab:9,capslock:20,lshift:160,rshift:161,lctrl:162,rctrl:163,lalt:164,ralt:165,lgui:91,rgui:92,appkey:93,
+  spacebar:32,space:32,enter:13,backspace:8,minus:189,equal:187,lbracket:219,rbracket:221,backslash:220,nonus_slash:226,
+  semicolon:186,quote:222,tilde:192,comma:188,period:190,slash:191,up:38,down:40,left:37,right:39,
+  home:36,end:35,pageup:33,pagedown:34,insert:45,delete:46,printscreen:44,scrolllock:145,pause:19,numlock:144,
+  numslash:111,numminus:109,numplus:107,numperiod:110,numenter:13};
+for(let i=1;i<=24;i++)VK['f'+i]=111+i;
+for(let i=0;i<=9;i++)VK['num'+i]=96+i;
+function keyCode(name){
+  const k=String(name).toLowerCase();
+  if(/^[a-z]$/.test(k))return {code:k.toUpperCase().charCodeAt(0),verified:true,label:k.toUpperCase()};
+  if(/^[0-9]$/.test(k))return {code:k.charCodeAt(0),verified:false,label:k};
+  if(k in VK)return {code:VK[k],verified:false,label:k};
+  return null;
+}
+// G HUB: 1左 2中 3右 4后退 5前进  →  雷云: 0左 2中 1右(推测)
+const MOUSE_MAP={1:{code:0,label:'左键',verified:true},2:{code:2,label:'中键',verified:true},3:{code:1,label:'右键',verified:false}};
+const PRESS=new Set(['PressKey','PressAndReleaseKey','PressMouseButton','PressAndReleaseMouseButton','MoveMouseRelative','MoveMouseTo','MoveMouseWheel','MoveMouseToVirtual']);
+const ACTIONS=new Set(['PressKey','ReleaseKey','PressAndReleaseKey','PressMouseButton','ReleaseMouseButton','PressAndReleaseMouseButton','Sleep','MoveMouseRelative','MoveMouseTo','MoveMouseWheel','MoveMouseToVirtual']);
+// ---- 执行 ----
+function analyze(src){
+  const ast=parse(lex(src));
+  const funcs={};
+  (function collect(list){for(const s of list){if(s.type==='funcdef'){funcs[s.name]=s;collect(s.body)}else if(s.body)collect(s.body);else if(s.branches)s.branches.forEach(b=>collect(b.body))}})(ast);
+  const memo={};
+  function countActs(list,seen){let c=0;for(const s of list){
+    if(s.type==='call'){if(PRESS.has(s.name))c++;else if(funcs[s.name]&&!seen.has(s.name)){seen.add(s.name);c+=countActs(funcs[s.name].body,seen);seen.delete(s.name)}}
+    else if(s.type==='for'&&s.num){c+=countActs(s.body,seen)*Math.max(0,Math.floor((s.num[1]-s.num[0])/(s.num[2]||1))+1)}
+    else if(s.type!=='funcdef'&&s.body)c+=countActs(s.body,seen);
+    else if(s.branches)s.branches.forEach(b=>c+=countActs(b.body,seen));
+  }return c}
+  const entries=Object.values(funcs).map(f=>({name:f.name,line:f.line,acts:countActs(f.body,new Set([f.name]))})).filter(e=>e.acts>0);
+  const top=countActs(ast.filter(s=>s.type!=='funcdef'),new Set());
+  if(top>0)entries.push({name:'(文件顶层)',line:1,acts:top});
+  entries.sort((a,b)=>b.acts-a.acts);
+  return {ast,funcs,entries,countActs};
+}
+function run(an,entryName,opt){
+  const {ast,funcs,countActs}=an;
+  const events=[],warn=[],used={keys:{},mouse:{}},triggers=[];let t=0,skippedChecks=0;
+  const held=new Map();
+  const W=(line,msg)=>{const w=warn.find(x=>x.line===line&&x.msg===msg);if(w)w.n++;else warn.push({line,msg,n:1})};
+  const sp=opt.speed||1;
+  function press(kind,code,line){const k=kind+':'+code;if(held.has(k))return;held.set(k,true);events.push({kind,code,state:0,at:t})}
+  function release(kind,code){const k=kind+':'+code;if(!held.has(k))return;held.delete(k);events.push({kind,code,state:1,at:t})}
+  function keyArgs(s){const out=[];for(const a of s.args){
+    if(!('lit'in a)){W(s.line,`${s.name} 的参数不是常量（${a.raw}），已跳过`);continue}
+    if(typeof a.lit==='number'){W(s.line,`${s.name} 使用扫描码 ${a.lit}，暂不支持，已跳过`);continue}
+    const kc=keyCode(a.lit);if(!kc){W(s.line,`未知按键名 "${a.lit}"，已跳过`);continue}
+    used.keys[kc.label]=kc;out.push(kc.code)}return out}
+  function mouseArg(s){const a=s.args[0];
+    if(!a||!('lit'in a)){W(s.line,`${s.name} 的参数不是常量，已跳过`);return null}
+    const m=MOUSE_MAP[a.lit];if(!m){W(s.line,`鼠标键 ${a.lit}（侧键等）在雷云宏里的编号未知，已跳过`);return null}
+    used.mouse[a.lit]=m;return m.code}
+  const RET={};
+  function exec(list,depth){
+    for(const s of list){
+      switch(s.type){
+        case 'call':{
+          const n=s.name;
+          if(n==='Sleep'){const a=s.args[0];if(a&&typeof a.lit==='number')t+=Math.max(0,a.lit)/sp;else W(s.line,`Sleep 的参数不是常量（${a?a.raw:'空'}），已忽略该延迟`);break}
+          if(n==='PressKey'){keyArgs(s).forEach(c=>press('key',c));break}
+          if(n==='ReleaseKey'){keyArgs(s).forEach(c=>release('key',c));break}
+          if(n==='PressAndReleaseKey'){const cs=keyArgs(s);cs.forEach(c=>press('key',c));cs.forEach(c=>release('key',c));break}
+          if(n==='PressMouseButton'){const c=mouseArg(s);if(c!==null)press('mouse',c);break}
+          if(n==='ReleaseMouseButton'){const c=mouseArg(s);if(c!==null)release('mouse',c);break}
+          if(n==='PressAndReleaseMouseButton'){const c=mouseArg(s);if(c!==null){press('mouse',c);release('mouse',c)}break}
+          if(n.startsWith('MoveMouse')){W(s.line,`${n}（鼠标移动/滚轮）暂不支持，已跳过`);break}
+          if(funcs[n]&&depth<20&&countActs(funcs[n].body,new Set([n]))>0){if(exec(funcs[n].body,depth+1)===RET){}break}
+          break}
+        case 'if':{
+          const acts=s.branches.reduce((c,b)=>c+countActs(b.body,new Set()),0);
+          const b0=s.branches[0];
+          if(s.branches.length===1&&b0.body.length&&b0.body.every(x=>x.type==='return'||x.type==='call'&&!ACTIONS.has(x.name))&&b0.body.some(x=>x.type==='return')){skippedChecks++;break}
+          if(acts===0)break;
+          const trig=s.branches.find(b=>b.cond&&/\b(event|arg)\b/.test(b.cond)&&/PRESSED/.test(b.cond)&&countActs(b.body,new Set())>0);
+          if(trig){triggers.push({line:s.line,cond:trig.cond});
+            const rel=s.branches.filter(b=>b!==trig&&countActs(b.body,new Set())>0);
+            if(rel.length)W(s.line,'松开触发（RELEASED）或其它分支里的动作无法放进同一个宏，已跳过');
+            if(exec(trig.body,depth)===RET)return RET;break}
+          W(s.line,`条件分支（if ${b0.cond}）无法在宏里判断，其中的按键动作已跳过`);
+          break}
+        case 'for':{
+          if(!countActs(s.body,new Set()))break;
+          if(!s.num){W(s.line,'非数字计数的 for 循环无法展开，已跳过');break}
+          const [a,b,st=1]=s.num;let cnt=0;
+          for(let v=a;st>0?v<=b:v>=b;v+=st){if(++cnt>10000){W(s.line,'循环次数过多，已截断');break}if(exec(s.body,depth)===RET)return RET}
+          break}
+        case 'loop':if(countActs(s.body,new Set()))W(s.line,`${s.kind==='while'?'while':'repeat…until'} 循环次数不确定，已跳过（可在雷云里用"按住时重复"近似）`);break;
+        case 'do':if(exec(s.body,depth)===RET)return RET;break;
+        case 'return':return RET;
+      }
+    }
+  }
+  const entry=entryName==='(文件顶层)'?ast.filter(s=>s.type!=='funcdef'):funcs[entryName].body;
+  exec(entry,0);
+  const held0=[...held.keys()];
+  for(const k of held0){const [kind,code]=k.split(':');release(kind,Number(code))}
+  if(held0.length)W(0,`结尾有 ${held0.length} 个键没松开，已自动补上松开`);
+  return {events,warn,used,duration:t,skippedChecks,triggers};
+}
+function splitEvents(events,sec){
+  if(!sec||!events.length)return [events];
+  const parts=[];let cur=[],start=events[0].at,held=0;
+  for(const e of events){
+    if(held===0&&cur.length&&e.state===0&&e.at-start>=sec*1000){parts.push(cur);cur=[];start=e.at}
+    cur.push(e);held+=e.state===0?1:-1;
+  }
+  if(cur.length)parts.push(cur);return parts;
+}
+const xesc=s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+function uuid4(){return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const r=Math.random()*16|0;return(c==='x'?r:(r&3|8)).toString(16)})}
+function toXml(events,name){
+  const I='   ',L=[],x=(tag,v,d)=>I.repeat(d)+'<'+tag+'>'+v+'</'+tag+'>';
+  const base=Date.now();let cnt=0;const ids={};
+  L.push('<Macro>',I+'<Name>'+xesc(name)+'</Name>',I+'<MacroEvents>',I+I+'<MacroEvent>',I+I+I+'<Type>actionBar</Type>',I+I+I+'<recordProfile/>',I+I+I+'<selected>false</selected>',I+I+'</MacroEvent>');
+  let now=events.length?events[0].at:0;
+  for(const e of events){
+    const dl=Math.round(e.at-now);
+    if(dl>0){L.push(I+I+'<MacroEvent>',x('Type',0,3),x('Number',String(+(dl/1000).toFixed(3)),3),x('selected','false',3),I+I+'</MacroEvent>');now=e.at}
+    const k=e.kind+e.code;if(e.state===0)ids[k]=base+(cnt++);
+    L.push(I+I+'<MacroEvent>');
+    if(e.kind==='key'){L.push(x('Type',1,3),x('Id',ids[k],3),I+I+I+'<KeyEvent>',x('Makecode',e.code,4),x('State',e.state,4));if(e.state===1)L.push(x('flag',1,4));L.push(I+I+I+'</KeyEvent>')}
+    else L.push(x('Type',2,3),x('Id',ids[k],3),I+I+I+'<MouseEvent>',x('MouseButton',e.code,4),x('State',e.state,4),I+I+I+'</MouseEvent>');
+    L.push(x('flag',e.state,3),x('selected','false',3),x('isPairing','false',3),I+I+'</MacroEvent>');
+  }
+  L.push(I+'</MacroEvents>',I+'<DelaySetting>0</DelaySetting>',I+'<Guid>'+uuid4()+'</Guid>',I+'<Version>4</Version>',I+'<MouseMoveType>none</MouseMoveType>','</Macro>');
+  return L.join('\r\n');
+}
+// ===== CORE END =====
+
+const $=id=>document.getElementById(id);
+let an=null,baseName='macro';
+function decode(buf){
+  try{return new TextDecoder('utf-8',{fatal:true}).decode(buf)}catch(e){}
+  try{return new TextDecoder('gbk').decode(buf)}catch(e){return new TextDecoder().decode(buf)}
+}
+function download(text,fn){
+  const url=URL.createObjectURL(new Blob([text],{type:'application/xml'}));
+  const a=document.createElement('a');a.href=url;a.download=fn;document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),2000);
+}
+function load(buf,name){
+  baseName=name.replace(/\.(lua|txt)$/i,'').replace(/[-_]?logitech$/i,'').replace(/[-_ ]+$/,'');
+  $('fname').textContent=name;
+  ['optCard','resCard','mapCard','warnCard','prevCard'].forEach(i=>$(i).hidden=true);
+  try{an=analyze(decode(buf))}catch(e){$('resCard').hidden=false;$('parts').innerHTML='';$('stat').innerHTML='<span class="e">解析失败：'+xesc(e.message)+'</span>';return}
+  if(!an.entries.length){$('resCard').hidden=false;$('parts').innerHTML='';$('stat').innerHTML='<span class="w">没在脚本里找到 PressKey / PressMouseButton 之类的按键动作。</span>';return}
+  $('entry').innerHTML=an.entries.map(e=>`<option value="${xesc(e.name)}">${xesc(e.name)}（第 ${e.line} 行，${e.acts} 个按下动作）</option>`).join('');
+  $('optCard').hidden=false;update();
+}
+function update(){
+  if(!an)return;
+  const r=run(an,$('entry').value,{speed:+$('speed').value||1});
+  $('resCard').hidden=false;
+  const downs=r.events.filter(e=>e.state===0);
+  const kd=downs.filter(e=>e.kind==='key').length,md=downs.length-kd;
+  let h=`${kd} 次按键、${md} 次鼠标键，共 ${r.events.length} 个事件 · 时长约 ${(r.duration/1000).toFixed(1)} 秒`;
+  if(r.triggers.length)h+=`<br><span class="muted">已识别触发条件 <code>${xesc(r.triggers[0].cond)}</code>，按"按下时播放"处理。</span>`;
+  if(r.skippedChecks)h+=`<br><span class="muted">跳过了 ${r.skippedChecks} 处中止检查（如 <code>if aborted() then return end</code>），雷云宏里不需要。</span>`;
+  if(r.duration>90000&&!(+$('split').value))h+=`<br><span class="muted">曲子较长，雷云里可能卡，可以设置拆分。</span>`;
+  if(!r.events.length)h=`<span class="w">这个入口没有产生任何动作，换一个函数试试。</span>`;
+  $('stat').innerHTML=h;
+  const parts=splitEvents(r.events,+$('split').value||0);
+  $('parts').innerHTML='';
+  let firstXml='';
+  if(r.events.length)parts.forEach((ev,i)=>{
+    const nm=parts.length>1?`${baseName}_${i+1}`:baseName;const xml=toXml(ev,nm);if(!i)firstXml=xml;
+    const secs=((ev[ev.length-1].at-ev[0].at)/1000).toFixed(0);
+    const b=document.createElement('button');b.textContent=`下载 ${nm}.xml（约 ${secs} 秒）`;
+    b.onclick=()=>download(xml,nm+'.xml');$('parts').appendChild(b);
+  });
+  if(parts.length>1)$('parts').insertAdjacentHTML('beforeend','<div class="muted" style="width:100%">只在所有键都松开的时刻切分，所以每段时长不完全一致。</div>');
+  // 对照表
+  const rows=[];
+  for(const [name,k] of Object.entries(r.used.keys))rows.push([`<code>"${xesc(name)}"</code>`,xesc(k.label.length===1?k.label:name),`Makecode ${k.code}`,k.verified]);
+  for(const [n,m] of Object.entries(r.used.mouse))rows.push([`<code>MouseButton ${n}</code>`,m.label,`MouseButton ${m.code}`,m.verified]);
+  $('map').innerHTML=rows.map(x=>`<tr><td>${x[0]}</td><td>${x[1]}</td><td>${x[2]}</td><td>${x[3]?'<span class="ok">已验证</span>':'<span class="w">待验证</span>'}</td></tr>`).join('');
+  $('mapCard').hidden=!rows.length;
+  $('warn').innerHTML=r.warn.map(w=>`<li class="w">${w.line?`第 ${w.line} 行：`:''}${xesc(w.msg)}${w.n>1?`（×${w.n}）`:''}</li>`).join('');
+  $('warnCard').hidden=!r.warn.length;
+  $('preview').textContent=firstXml.split('\r\n').slice(0,30).join('\n')+'\n…';$('prevCard').hidden=!firstXml;
+}
+$('drop').onclick=()=>$('file').click();
+$('file').onchange=e=>{const f=e.target.files[0];if(f)f.arrayBuffer().then(b=>load(b,f.name));e.target.value=''};
+['dragenter','dragover'].forEach(t=>$('drop').addEventListener(t,e=>{e.preventDefault();$('drop').classList.add('over')}));
+['dragleave','drop'].forEach(t=>$('drop').addEventListener(t,e=>{e.preventDefault();$('drop').classList.remove('over')}));
+$('drop').addEventListener('drop',e=>{const f=e.dataTransfer.files[0];if(f)f.arrayBuffer().then(b=>load(b,f.name))});
+['entry','speed','split'].forEach(i=>$(i).addEventListener('input',update));
+</script>
+</body>
+</html>
