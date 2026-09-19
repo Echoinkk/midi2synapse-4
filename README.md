@@ -26,12 +26,12 @@
 
 | 文件 | 说明 | 依赖 |
 |---|---|---|
-| `midi2razer.html` | **MIDI → 雷云 4 宏**，带试听和键位高亮 | 无，浏览器打开 |
+| `midi2razer.html` | **MIDI → 雷云 4 宏** | 无，浏览器打开 |
 | `lua2razer.html` | **罗技 Lua → 雷云 4 宏** | 无，浏览器打开 |
-| `midi2razer_gui.py` | MIDI 转换的图形界面版 | Python + `mido` |
+| `lua2razer.py` | lua转xml的命令行版本 | Python + `mido` |
 | `midi2razer.py` | MIDI 转换的命令行版，可批量处理 | Python + `mido` |
 
-网页版和 Python 版的转换逻辑完全一致，输出的事件逐条相同。网页版自带一个精简的 MIDI 解析器，所以不需要 `mido`；遇到冷门格式的 MIDI 打不开时，改用 Python 版通常能解决。
+网页版和 Python 版的转换逻辑完全一致，输出的事件逐条相同。网页版自带一个精简的 MIDI 解析器，所以不需要 `mido`；遇到冷门格式的 MIDI 打不开时，改用 mido库通常能解决（应该吧）。
 
 ### 快速开始
 
@@ -41,8 +41,7 @@
 
 ```bash
 pip install mido
-python midi2razer_gui.py                  # 图形界面
-python midi2razer.py song.mid             # 命令行
+python midi2razer.py song.mid             
 python midi2razer.py song.mid --transpose -12 --speed 0.9
 python midi2razer.py song.mid --split 40  # 长曲子拆段
 python midi2razer.py song.mid --legato 0.8 --min-hold 40 --breath 20 --gap 10   # 快速曲子
@@ -75,8 +74,7 @@ python midi2razer.py song.mid --legato 0.8 --min-hold 40 --breath 20 --gap 10   
 
 ## 雷云 4 宏文件格式
 
-逆向自雷云 4 导出的宏文件，仅供参考，官方未公开文档。
-
+逆向自雷云 4 导出的宏文件，仅供参考
 ```xml
 <Macro>
    <Name>宏名称</Name>
